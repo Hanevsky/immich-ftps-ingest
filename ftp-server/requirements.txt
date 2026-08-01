@@ -1,0 +1,7 @@
+pyftpdlib==2.2.0
+pyOpenSSL==26.3.0
+cryptography==49.0.0
+cffi==2.1.0
+pycparser==3.0
+pyasynchat==1.0.5
+pyasyncore==1.0.5

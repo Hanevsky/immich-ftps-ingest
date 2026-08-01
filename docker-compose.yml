@@ -1,0 +1,130 @@
+name: sony-immich-ingest
+
+services:
+  sony-ftp:
+    container_name: sony_ftp
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER to your GitHub user or org}/immich-ftps-server:${IMAGE_TAG:-latest}
+    # Uncomment for local development instead of pulling:
+    # build:
+    #   context: ./ftp-server
+    user: "10001:10001"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+    environment:
+      FTP_USERS_FILE: /run/secrets/ftp_users
+    secrets:
+      - ftp_users
+    ports:
+      - "2121:2121/tcp"
+      - "30000-30009:30000-30009/tcp"
+    volumes:
+      - sony_staging:/srv/ftp/sony
+      - ./certs/server.crt:/run/ftp-certs/server.crt:ro
+      - ./certs/server.key:/run/ftp-certs/server.key:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    networks:
+      - ftp_net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import socket;
+          s=socket.create_connection(('127.0.0.1',2121),3);
+          ok=s.recv(64).startswith(b'220');s.close();raise SystemExit(0 if ok else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+  immich-importer:
+    container_name: immich_ftp_importer
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER to your GitHub user or org}/immich-ftps-importer:${IMAGE_TAG:-latest}
+    # build:
+    #   context: ./importer
+    user: "10001:10001"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    environment:
+      IMMICH_HOST: ${IMMICH_HOST:?Set IMMICH_HOST, e.g. http://immich-server:2283}
+      IMMICH_API_KEY_FILE: /run/secrets/immich_api_key
+      # Plain HTTP to Immich requires an explicit opt-in.
+      IMMICH_ALLOW_HTTP: ${IMMICH_ALLOW_HTTP:-false}
+      TZ: ${TZ:-UTC}
+    secrets:
+      - immich_api_key
+    volumes:
+      - sony_staging:/data:ro
+      - importer_state:/state
+      - ./immich-certs:/run/immich-certs:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    networks:
+      - immich
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          now=$$(date +%s);
+          last=$$(cat /state/last-cycle 2>/dev/null || echo 0);
+          test $$((now - last)) -le 240
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+secrets:
+  ftp_users:
+    file: ${FTP_USERS_FILE:-./secrets/ftp_users}
+  immich_api_key:
+    file: ${IMMICH_API_KEY_FILE:-./secrets/immich_api_key}
+
+volumes:
+  sony_staging:
+  importer_state:
+
+networks:
+  ftp_net:
+    driver: bridge
+    internal: true
+  immich:
+    external: true
+    name: ${IMMICH_DOCKER_NETWORK:-immich_default}

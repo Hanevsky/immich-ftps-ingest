@@ -1,0 +1,147 @@
+# Example: Immich + camera FTPS ingest in one Compose project.
+#
+# This mirrors the common Immich sidecar pattern (e.g. immich-sftp): add the
+# FTPS services next to immich-server on the same Docker network.
+#
+# IMPORTANT
+# ---------
+# Prefer the official Immich release compose as your base, then merge the
+# "sony-ftp" / "immich-importer" blocks from this file:
+#
+#   https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml
+#   https://docs.immich.app/install/docker-compose
+#
+# The Immich service definitions below are illustrative and may lag the
+# current release. Always pin Immich from the release assets above.
+#
+# Usage (from this repository root):
+#
+#   cp .env.example .env
+#   # set Immich DB_*/UPLOAD_LOCATION/DB_DATA_LOCATION as in Immich's .env
+#   .\scripts\generate-ftps-cert.ps1 -ServerIp 192.168.1.10
+#   docker compose -f examples/docker-compose.with-immich.yml --env-file .env up -d
+#
+# Compose resolves relative volume paths from the compose file's directory,
+# so ../certs and ../immich-certs point back to the repo root as expected.
+
+name: immich
+
+services:
+  ##########################################################################
+  # Immich (illustrative — replace with the official release compose)
+  ##########################################################################
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    volumes:
+      - ${UPLOAD_LOCATION}:/data
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - ../.env
+    ports:
+      - "2283:2283"
+    depends_on:
+      - redis
+      - database
+    restart: always
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    volumes:
+      - model-cache:/cache
+    env_file:
+      - ../.env
+    restart: always
+
+  redis:
+    container_name: immich_redis
+    image: docker.io/valkey/valkey:9
+    healthcheck:
+      test: redis-cli ping || exit 1
+    restart: always
+
+  database:
+    container_name: immich_postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_DB: ${DB_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - ${DB_DATA_LOCATION}:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: always
+
+  ##########################################################################
+  # Camera FTPS ingest (add these two services to your Immich compose)
+  ##########################################################################
+  sony-ftp:
+    container_name: sony_ftp
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/immich-ftps-server:${IMAGE_TAG:-latest}
+    user: "10001:10001"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    environment:
+      FTP_USERS: ${FTP_USERS:?Set FTP_USERS=username:password}
+      FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:?Set FTP_MASQUERADE_ADDRESS to the Docker host LAN IPv4}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "2121:2121/tcp"
+      - "30000-30009:30000-30009/tcp"
+    volumes:
+      - sony_staging:/srv/ftp/sony
+      - ../certs/server.crt:/run/ftp-certs/server.crt:ro
+      - ../certs/server.key:/run/ftp-certs/server.key:ro
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    networks:
+      - ftp_net
+      # no Immich / internet access — camera-facing only
+
+  immich-importer:
+    container_name: immich_ftp_importer
+    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER}/immich-ftps-importer:${IMAGE_TAG:-latest}
+    user: "10001:10001"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    environment:
+      # Same Docker network as immich-server — no external network needed.
+      IMMICH_HOST: ${IMMICH_HOST:-http://immich-server:2283}
+      IMMICH_API_KEY: ${IMMICH_API_KEY:?Set IMMICH_API_KEY}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - sony_staging:/data:ro
+      - importer_state:/state
+      - ../immich-certs:/run/immich-certs:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    depends_on:
+      - immich-server
+    # default project network → reaches immich-server:2283
+
+volumes:
+  model-cache:
+  sony_staging:
+  importer_state:
+
+networks:
+  # Compose also creates the default project network for Immich + importer.
+  ftp_net:
+    driver: bridge
+    internal: true

@@ -1,0 +1,23 @@
+# Runtime secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# Generated FTPS certificate material
+certs/*
+!certs/.gitkeep
+immich-certs/*
+!immich-certs/.gitkeep
+
+# Python/test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+venv/
+
+# IDE/OS artifacts
+.DS_Store
+Thumbs.db

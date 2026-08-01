@@ -1,0 +1,14 @@
+# Local development: build images from source instead of pulling GHCR.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+services:
+  sony-ftp:
+    build:
+      context: ./ftp-server
+    image: ghcr.io/${GHCR_OWNER:-local}/immich-ftps-server:${IMAGE_TAG:-dev}
+
+  immich-importer:
+    build:
+      context: ./importer
+    image: ghcr.io/${GHCR_OWNER:-local}/immich-ftps-importer:${IMAGE_TAG:-dev}
