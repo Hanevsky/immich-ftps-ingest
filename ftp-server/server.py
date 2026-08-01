@@ -171,26 +171,27 @@ def _read_secret_file(env_name: str) -> str | None:
     return path.read_text(encoding="utf-8").strip()
 
 
+def _normalize_pem(value: str) -> str:
+    """Accept real newlines or dotenv-style escaped \\n sequences."""
+    text = value.strip().strip('"').strip("'")
+    if "\\n" in text and "\n" not in text:
+        text = text.replace("\\n", "\n")
+    return text.strip()
+
+
 def resolve_ftp_credentials() -> tuple[str, str]:
-    """Accept FTP_USERS_FILE (secret) > FTP_USERS > FTP_USER + FTP_PASS."""
+    """Accept FTP_USERS=user:password (or FTP_USERS_FILE with the same content)."""
     users = _read_secret_file("FTP_USERS_FILE") or os.environ.get(
         "FTP_USERS", ""
     ).strip()
-    if users:
-        if ":" not in users:
-            raise ConfigError("FTP_USERS must be in user:password form")
-        username, password = users.split(":", 1)
-        username = username.strip()
-        if not username or password == "":
-            raise ConfigError("FTP_USERS must be in user:password form")
-        return username, password
-
-    username = os.environ.get("FTP_USER", "").strip()
-    password = os.environ.get("FTP_PASS", "")
-    if not username and not password:
-        raise ConfigError(
-            "Set FTP_USERS_FILE (recommended), FTP_USERS=user:password, or FTP_USER+FTP_PASS"
-        )
+    if not users:
+        raise ConfigError("Set FTP_USERS=user:password")
+    if ":" not in users:
+        raise ConfigError("FTP_USERS must be in user:password form")
+    username, password = users.split(":", 1)
+    username = username.strip()
+    if not username or password == "":
+        raise ConfigError("FTP_USERS must be in user:password form")
     return username, password
 
 
@@ -258,8 +259,8 @@ class ServerConfig:
 
         # Portainer-friendly: allow PEM content via env when bind-mounting
         # certificate files is not possible.
-        cert_pem = os.environ.get("FTP_CERT_PEM", "").strip()
-        key_pem = os.environ.get("FTP_KEY_PEM", "").strip()
+        cert_pem = _normalize_pem(os.environ.get("FTP_CERT_PEM", ""))
+        key_pem = _normalize_pem(os.environ.get("FTP_KEY_PEM", ""))
         if cert_pem or key_pem:
             if not (cert_pem and key_pem):
                 raise ConfigError("FTP_CERT_PEM and FTP_KEY_PEM must both be set")

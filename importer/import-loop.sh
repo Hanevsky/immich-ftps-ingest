@@ -54,12 +54,6 @@ is_allowed_file() {
 }
 
 validate_configuration() {
-  # Docker secrets: prefer files over environment variables.
-  if [ -n "${FTP_USERS_FILE:-}" ]; then
-    [ -f "$FTP_USERS_FILE" ] || fail "FTP_USERS_FILE is missing"
-    FTP_USERS=$(cat "$FTP_USERS_FILE")
-    export FTP_USERS
-  fi
   if [ -n "${IMMICH_API_KEY_FILE:-}" ]; then
     [ -f "$IMMICH_API_KEY_FILE" ] || fail "IMMICH_API_KEY_FILE is missing"
     IMMICH_API_KEY=$(cat "$IMMICH_API_KEY_FILE")
@@ -83,8 +77,8 @@ validate_configuration() {
       ;;
   esac
 
-  # Plain HTTP to Immich is allowed only with an explicit opt-in.
-  allow_http=$(printf '%s' "${IMMICH_ALLOW_HTTP:-false}" | tr '[:upper:]' '[:lower:]')
+  # Default true: Immich on the Docker network is usually plain HTTP.
+  allow_http=$(printf '%s' "${IMMICH_ALLOW_HTTP:-true}" | tr '[:upper:]' '[:lower:]')
   case "$allow_http" in
     true|false) ;;
     *) fail "IMMICH_ALLOW_HTTP must be true or false" ;;
@@ -102,17 +96,11 @@ validate_configuration() {
       ;;
   esac
 
+  mkdir -p /run/immich-certs
   if [ -n "${IMMICH_CA_CERT_PEM:-}" ]; then
-    printf '%s\n' "$IMMICH_CA_CERT_PEM" > /run/immich-certs/ca.crt
+    # Support dotenv-style escaped newlines from .env files.
+    printf '%s\n' "$IMMICH_CA_CERT_PEM" | sed 's/\\n/\n/g' > /run/immich-certs/ca.crt
     NODE_EXTRA_CA_CERTS=/run/immich-certs/ca.crt
-    export NODE_EXTRA_CA_CERTS
-  elif [ -n "${IMMICH_CA_CERT:-}" ]; then
-    case "$IMMICH_CA_CERT" in
-      /run/immich-certs/*) ;;
-      *) fail "IMMICH_CA_CERT must point inside /run/immich-certs" ;;
-    esac
-    [ -f "$IMMICH_CA_CERT" ] || fail "IMMICH_CA_CERT does not exist"
-    NODE_EXTRA_CA_CERTS=$IMMICH_CA_CERT
     export NODE_EXTRA_CA_CERTS
   elif [ -f /run/immich-certs/ca.crt ]; then
     NODE_EXTRA_CA_CERTS=/run/immich-certs/ca.crt

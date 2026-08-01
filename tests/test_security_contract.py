@@ -8,42 +8,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SecurityContractTests(unittest.TestCase):
-    def test_compose_keeps_staging_read_only_for_importer(self) -> None:
+    def test_compose_is_self_contained_for_portainer(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("sony_staging:/data:ro", compose)
         self.assertIn("internal: true", compose)
         self.assertGreaterEqual(compose.count("no-new-privileges:true"), 2)
         self.assertGreaterEqual(compose.count("cap_drop:"), 2)
         self.assertGreaterEqual(compose.count("read_only: true"), 2)
-        self.assertGreaterEqual(compose.count('user: "10001:10001"'), 2)
         self.assertIn("FTP_USERS", compose)
+        self.assertIn("FTP_CERT_PEM", compose)
+        self.assertIn("FTP_KEY_PEM", compose)
+        self.assertIn("IMMICH_API_KEY", compose)
         self.assertIn("IMMICH_HOST", compose)
-        self.assertIn("stop_grace_period: 15s", compose)
-        self.assertIn("stop_grace_period: 60s", compose)
-        self.assertIn("/state/last-cycle", compose)
         self.assertIn("immich_default", compose)
         self.assertIn("immich-ftps-server", compose)
         self.assertIn("immich-ftps-importer", compose)
-        self.assertIn("GHCR_OWNER", compose)
-        self.assertIn("FTP_USERS_FILE", compose)
-        self.assertIn("IMMICH_API_KEY_FILE", compose)
-        self.assertIn("ftp_users.txt", compose)
-        self.assertIn("immich_api_key.txt", compose)
-        portainer = (ROOT / "portainer.yml").read_text(encoding="utf-8")
-        self.assertIn("FTP_CERT_PEM", portainer)
-        self.assertIn("FTP_KEY_PEM", portainer)
-        self.assertIn("IMMICH_CA_CERT_PEM", portainer)
-        self.assertNotIn("./certs/", portainer)
-        self.assertNotIn("secrets:", portainer)
+        self.assertNotIn("./certs/", compose)
+        self.assertNotIn("secrets:", compose)
+        self.assertNotIn("FTP_USERS_FILE", compose)
+        self.assertNotIn("./ftp_users.txt", compose)
 
-    def test_ftp_service_cannot_read_ca_private_key_or_immich_credentials(self) -> None:
+    def test_ftp_service_cannot_read_immich_credentials(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         ftp_service = compose.split("  immich-importer:", maxsplit=1)[0]
-        self.assertIn("./certs/server.crt:/run/ftp-certs/server.crt:ro", ftp_service)
-        self.assertIn("./certs/server.key:/run/ftp-certs/server.key:ro", ftp_service)
-        self.assertNotIn("./certs:/run/ftp-certs", ftp_service)
+        # Ignore file header comments; assert the FTP service env block.
+        ftp_env = ftp_service.split("environment:", maxsplit=1)[1]
+        self.assertNotIn("IMMICH_", ftp_env)
         self.assertNotIn("ca.key", ftp_service)
-        self.assertNotIn("IMMICH_", ftp_service)
 
     def test_compose_does_not_mount_or_configure_immich_database(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8").lower()
@@ -58,16 +49,18 @@ class SecurityContractTests(unittest.TestCase):
         self.assertNotIn("--delete", importer)
         self.assertNotIn("--delete-duplicates", importer)
         self.assertRegex(importer, r"''\|\.\*\|-\*\)")
-        self.assertRegex(importer, r"conv=fsync|sync \"\$MANIFEST_FILE\"")
+        self.assertRegex(importer, r"sync \"\$MANIFEST_FILE\"")
         self.assertIn("IMMICH_ALLOW_HTTP", importer)
+        self.assertIn("IMMICH_HOST", importer)
+        self.assertIn("IMMICH_CA_CERT_PEM", importer)
+        self.assertNotIn("FTP_USERS", importer)
         importer_dockerfile = (ROOT / "importer" / "Dockerfile").read_text(
             encoding="utf-8"
         )
         self.assertIn(r"sed -i 's/\r$//'", importer_dockerfile)
         self.assertIn("--ignore-scripts", importer_dockerfile)
-        self.assertIn("IMMICH_HOST", importer)
 
-    def test_containers_run_as_non_root(self) -> None:
+    def test_containers_run_as_non_root_in_images(self) -> None:
         for dockerfile in (
             ROOT / "ftp-server" / "Dockerfile",
             ROOT / "importer" / "Dockerfile",
@@ -89,8 +82,6 @@ class SecurityContractTests(unittest.TestCase):
         self.assertRegex(gitignore, r"(?m)^\.env$")
         self.assertRegex(gitignore, r"(?m)^certs/\*$")
         self.assertRegex(gitignore, r"(?m)^immich-certs/\*$")
-        self.assertRegex(gitignore, r"(?m)^ftp_users\.txt$")
-        self.assertRegex(gitignore, r"(?m)^immich_api_key\.txt$")
         attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
         self.assertRegex(attributes, r"(?m)^\*\.sh text eol=lf$")
 

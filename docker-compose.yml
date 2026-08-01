@@ -1,13 +1,34 @@
+# Immich FTPS ingest — single stack for Docker Compose and Portainer.
+#
+# No bind-mounted secrets/certs: everything is environment variables
+# (Portainer web editor / Git stacks work without uploading extra files).
+#
+# Required env:
+#   FTP_USERS                username:password
+#   FTP_MASQUERADE_ADDRESS   Docker host LAN IPv4
+#   IMMICH_API_KEY           Immich API key (asset.upload)
+#   FTP_CERT_PEM             full PEM of server.crt
+#   FTP_KEY_PEM              full PEM of server.key
+#
+# Optional (defaults shown):
+#   IMMICH_HOST=http://immich-server:2283
+#   IMMICH_DOCKER_NETWORK=immich_default
+#   IMMICH_ALLOW_HTTP=true
+#   IMMICH_CA_CERT_PEM=      (only if Immich uses a private HTTPS CA)
+#   GHCR_OWNER=hanevsky
+#   IMAGE_TAG=latest
+#   TZ=UTC
+#
+# Generate certs:  ./scripts/generate-ftps-cert.sh 192.168.1.10
+# Fill .env:       ./scripts/make-env.sh 192.168.1.10
+# Or Portainer: paste this file + set the five required variables.
+
 name: sony-immich-ingest
 
 services:
   sony-ftp:
     container_name: sony_ftp
     image: ghcr.io/${GHCR_OWNER:-hanevsky}/immich-ftps-server:${IMAGE_TAG:-latest}
-    # Uncomment for local development instead of pulling:
-    # build:
-    #   context: ./ftp-server
-    user: "10001:10001"
     restart: unless-stopped
     init: true
     read_only: true
@@ -17,23 +38,18 @@ services:
     cap_drop:
       - ALL
     pids_limit: 100
-    ulimits:
-      nofile:
-        soft: 1024
-        hard: 2048
     environment:
-      FTP_USERS_FILE: /run/secrets/ftp_users
+      FTP_USERS: ${FTP_USERS:?Set FTP_USERS=username:password}
       FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:?Set FTP_MASQUERADE_ADDRESS to this Docker host LAN IPv4}
+      FTP_CERT_PEM: ${FTP_CERT_PEM:?Set FTP_CERT_PEM (server.crt PEM)}
+      FTP_KEY_PEM: ${FTP_KEY_PEM:?Set FTP_KEY_PEM (server.key PEM)}
       TZ: ${TZ:-UTC}
-    secrets:
-      - ftp_users
     ports:
       - "2121:2121/tcp"
       - "30000-30009:30000-30009/tcp"
     volumes:
       - sony_staging:/srv/ftp/sony
-      - ./certs/server.crt:/run/ftp-certs/server.crt:ro
-      - ./certs/server.key:/run/ftp-certs/server.key:ro
+      - ftp_certs:/run/ftp-certs
     tmpfs:
       - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
     networks:
@@ -49,23 +65,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "0.50"
-          memory: 256M
 
   immich-importer:
     container_name: immich_ftp_importer
     image: ghcr.io/${GHCR_OWNER:-hanevsky}/immich-ftps-importer:${IMAGE_TAG:-latest}
-    # build:
-    #   context: ./importer
-    user: "10001:10001"
     restart: unless-stopped
     init: true
     read_only: true
@@ -77,15 +80,14 @@ services:
     pids_limit: 100
     environment:
       IMMICH_HOST: ${IMMICH_HOST:-http://immich-server:2283}
-      IMMICH_API_KEY_FILE: /run/secrets/immich_api_key
+      IMMICH_API_KEY: ${IMMICH_API_KEY:?Set IMMICH_API_KEY}
       IMMICH_ALLOW_HTTP: ${IMMICH_ALLOW_HTTP:-true}
+      IMMICH_CA_CERT_PEM: ${IMMICH_CA_CERT_PEM:-}
       TZ: ${TZ:-UTC}
-    secrets:
-      - immich_api_key
     volumes:
       - sony_staging:/data:ro
       - importer_state:/state
-      - ./immich-certs:/run/immich-certs:ro
+      - immich_certs:/run/immich-certs
     tmpfs:
       - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
     networks:
@@ -101,26 +103,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 90s
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "1.00"
-          memory: 512M
-
-secrets:
-  ftp_users:
-    file: ${FTP_USERS_FILE:-./ftp_users.txt}
-  immich_api_key:
-    file: ${IMMICH_API_KEY_FILE:-./immich_api_key.txt}
 
 volumes:
   sony_staging:
   importer_state:
+  ftp_certs:
+  immich_certs:
 
 networks:
   ftp_net:
