@@ -29,6 +29,12 @@ class SecurityContractTests(unittest.TestCase):
         self.assertIn("IMMICH_API_KEY_FILE", compose)
         self.assertIn("ftp_users.txt", compose)
         self.assertIn("immich_api_key.txt", compose)
+        portainer = (ROOT / "portainer.yml").read_text(encoding="utf-8")
+        self.assertIn("FTP_CERT_PEM", portainer)
+        self.assertIn("FTP_KEY_PEM", portainer)
+        self.assertIn("IMMICH_CA_CERT_PEM", portainer)
+        self.assertNotIn("./certs/", portainer)
+        self.assertNotIn("secrets:", portainer)
 
     def test_ftp_service_cannot_read_ca_private_key_or_immich_credentials(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")

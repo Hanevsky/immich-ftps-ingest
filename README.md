@@ -32,6 +32,35 @@ Compromised FTP credentials can only **upload** allowed media into staging (and 
 
 ## Deploy options
 
+### Portainer (no extra files)
+
+Portainer web editor / Git stacks do not upload this repo's `certs/` or
+`secrets/` folders. Use the self-contained [`portainer.yml`](portainer.yml):
+credentials and the FTPS certificate are pasted as environment variables.
+
+1. Generate certs on any machine with OpenSSL:
+
+```bash
+./scripts/generate-ftps-cert.sh 192.168.1.10   # or .ps1 on Windows
+```
+
+2. Portainer → **Stacks** → **Add stack** → paste `portainer.yml`.
+
+3. In **Environment variables** set:
+
+| Variable | Value |
+|----------|-------|
+| `FTP_USERS` | `camera_a7c2:LongRandomSecret!!` |
+| `FTP_MASQUERADE_ADDRESS` | `192.168.1.10` |
+| `IMMICH_API_KEY` | your Immich API key |
+| `FTP_CERT_PEM` | full contents of `certs/server.crt` |
+| `FTP_KEY_PEM` | full contents of `certs/server.key` |
+
+Optional: `IMMICH_HOST`, `IMMICH_DOCKER_NETWORK`, `IMMICH_ALLOW_HTTP`,
+`IMMICH_CA_CERT_PEM`, `GHCR_OWNER`, `IMAGE_TAG`, `TZ`.
+
+4. **Deploy the stack**. Import `certs/cacert.pem` into the camera.
+
 ### Publish images to GitHub (GHCR) — recommended
 
 Build once in CI, pull on every host (no local `docker compose build`):

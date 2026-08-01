@@ -84,6 +84,40 @@ class ConfigValidationTests(unittest.TestCase):
             os.environ.pop("FTP_ROOT", None)
             os.environ.pop("FTP_MASQUERADE_ADDRESS", None)
 
+    def test_cert_pem_env_writes_cert_and_key(self) -> None:
+        previous = {
+            key: os.environ.get(key)
+            for key in (
+                "FTP_USERS",
+                "FTP_CERT_PEM",
+                "FTP_KEY_PEM",
+                "FTP_CERT_FILE",
+                "FTP_KEY_FILE",
+            )
+        }
+        try:
+            os.environ["FTP_USERS"] = "camera_test_7x:Str0ng-P@ssw0rd!!99"
+            os.environ.pop("FTP_CERT_FILE", None)
+            os.environ.pop("FTP_KEY_FILE", None)
+            with tempfile.TemporaryDirectory() as directory:
+                cert_path = Path(directory) / "server.crt"
+                key_path = Path(directory) / "server.key"
+                os.environ["FTP_CERT_FILE"] = str(cert_path)
+                os.environ["FTP_KEY_FILE"] = str(key_path)
+                os.environ["FTP_CERT_PEM"] = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+                os.environ["FTP_KEY_PEM"] = "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"
+                # Force re-evaluation of cert material.
+                config = ftp_server.ServerConfig.from_env()
+                self.assertTrue(config.tls_enabled)
+                self.assertIn("BEGIN CERTIFICATE", cert_path.read_text(encoding="utf-8"))
+                self.assertIn("BEGIN PRIVATE KEY", key_path.read_text(encoding="utf-8"))
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
 
 class FilenamePolicyTests(unittest.TestCase):
     def test_accepts_sony_names_case_insensitively(self) -> None:

@@ -1,0 +1,153 @@
+# Portainer-friendly stack: everything is configured via environment variables.
+#
+# Why: Portainer web editor / Git stacks do not upload extra files from this
+# repo (certs/, secrets/, build contexts). This compose therefore:
+#   - pulls prebuilt images from GHCR (no local Dockerfile build),
+#   - takes credentials as plain env (no Docker secrets files),
+#   - takes the FTPS certificate as PEM env (no cert bind-mounts).
+#
+# Usage
+# -----
+# 1. Generate certs on any machine with OpenSSL (PowerShell variant also exists):
+#      ./scripts/generate-ftps-cert.sh 192.168.1.10
+# 2. In Portainer -> Stacks -> Add stack -> Web editor:
+#      paste this file, then add the environment variables below.
+# 3. Deploy the stack.
+#
+# Required Portainer environment variables:
+#   FTP_USERS                camera_a7c2:LongRandomSecret!!
+#   FTP_MASQUERADE_ADDRESS   192.168.1.10
+#   IMMICH_API_KEY           your-immich-api-key
+#   FTP_CERT_PEM             contents of certs/server.crt (full PEM)
+#   FTP_KEY_PEM              contents of certs/server.key (full PEM)
+#
+# Optional:
+#   IMMICH_HOST              http://immich-server:2283 (default)
+#   IMMICH_DOCKER_NETWORK    immich_default (default)
+#   IMMICH_ALLOW_HTTP        true (default, trusted Docker network)
+#   IMMICH_CA_CERT_PEM       custom CA for HTTPS Immich (full PEM)
+#   GHCR_OWNER / IMAGE_TAG   hanevsky / latest (default)
+#   TZ                       UTC (default)
+
+name: sony-immich-ingest
+
+services:
+  sony-ftp:
+    container_name: sony_ftp
+    image: ghcr.io/${GHCR_OWNER:-hanevsky}/immich-ftps-server:${IMAGE_TAG:-latest}
+    # root is required to materialize PEM env into /run/ftp-certs (volume mount);
+    # the FTP process itself drops to a minimal runtime surface via the entrypoint.
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+    environment:
+      FTP_USERS: ${FTP_USERS:?Set FTP_USERS=username:password}
+      FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:?Set FTP_MASQUERADE_ADDRESS to this Docker host LAN IPv4}
+      FTP_CERT_PEM: ${FTP_CERT_PEM:?Paste certs/server.crt PEM}
+      FTP_KEY_PEM: ${FTP_KEY_PEM:?Paste certs/server.key PEM}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "2121:2121/tcp"
+      - "30000-30009:30000-30009/tcp"
+    volumes:
+      - sony_staging:/srv/ftp/sony
+      - ftp_certs:/run/ftp-certs
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    networks:
+      - ftp_net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import socket;
+          s=socket.create_connection(('127.0.0.1',2121),3);
+          ok=s.recv(64).startswith(b'220');s.close();raise SystemExit(0 if ok else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+  immich-importer:
+    container_name: immich_ftp_importer
+    image: ghcr.io/${GHCR_OWNER:-hanevsky}/immich-ftps-importer:${IMAGE_TAG:-latest}
+    # root only to write an optional IMMICH_CA_CERT_PEM into /run/immich-certs;
+    # the import loop then runs as the image's unprivileged user.
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 100
+    environment:
+      IMMICH_HOST: ${IMMICH_HOST:-http://immich-server:2283}
+      IMMICH_API_KEY: ${IMMICH_API_KEY:?Set IMMICH_API_KEY}
+      IMMICH_ALLOW_HTTP: ${IMMICH_ALLOW_HTTP:-true}
+      IMMICH_CA_CERT_PEM: ${IMMICH_CA_CERT_PEM:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - sony_staging:/data:ro
+      - importer_state:/state
+      - immich_certs:/run/immich-certs
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    networks:
+      - immich
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          now=$$(date +%s);
+          last=$$(cat /state/last-cycle 2>/dev/null || echo 0);
+          test $$((now - last)) -le 240
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+volumes:
+  sony_staging:
+  importer_state:
+  ftp_certs:
+  immich_certs:
+
+networks:
+  ftp_net:
+    driver: bridge
+    internal: true
+  immich:
+    external: true
+    name: ${IMMICH_DOCKER_NETWORK:-immich_default}

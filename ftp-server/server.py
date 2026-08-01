@@ -255,6 +255,23 @@ class ServerConfig:
             os.environ.get("FTP_CERT_FILE", "/run/ftp-certs/server.crt")
         )
         key_path = Path(os.environ.get("FTP_KEY_FILE", "/run/ftp-certs/server.key"))
+
+        # Portainer-friendly: allow PEM content via env when bind-mounting
+        # certificate files is not possible.
+        cert_pem = os.environ.get("FTP_CERT_PEM", "").strip()
+        key_pem = os.environ.get("FTP_KEY_PEM", "").strip()
+        if cert_pem or key_pem:
+            if not (cert_pem and key_pem):
+                raise ConfigError("FTP_CERT_PEM and FTP_KEY_PEM must both be set")
+            # "unnamed" Docker volumes are writable by root only; write as root
+            # (server.py drops privileges only after config load via USER).
+            cert_path.parent.mkdir(parents=True, exist_ok=True)
+            cert_path.write_text(cert_pem + "\n", encoding="utf-8")
+            key_path.write_text(key_pem + "\n", encoding="utf-8")
+            if os.name == "posix":
+                os.chmod(cert_path, 0o600)
+                os.chmod(key_path, 0o600)
+
         cert_exists = cert_path.is_file()
         key_exists = key_path.is_file()
 

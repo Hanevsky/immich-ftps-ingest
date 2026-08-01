@@ -102,7 +102,11 @@ validate_configuration() {
       ;;
   esac
 
-  if [ -n "${IMMICH_CA_CERT:-}" ]; then
+  if [ -n "${IMMICH_CA_CERT_PEM:-}" ]; then
+    printf '%s\n' "$IMMICH_CA_CERT_PEM" > /run/immich-certs/ca.crt
+    NODE_EXTRA_CA_CERTS=/run/immich-certs/ca.crt
+    export NODE_EXTRA_CA_CERTS
+  elif [ -n "${IMMICH_CA_CERT:-}" ]; then
     case "$IMMICH_CA_CERT" in
       /run/immich-certs/*) ;;
       *) fail "IMMICH_CA_CERT must point inside /run/immich-certs" ;;
