@@ -27,6 +27,8 @@ class SecurityContractTests(unittest.TestCase):
         self.assertIn("GHCR_OWNER", compose)
         self.assertIn("FTP_USERS_FILE", compose)
         self.assertIn("IMMICH_API_KEY_FILE", compose)
+        self.assertIn("ftp_users.txt", compose)
+        self.assertIn("immich_api_key.txt", compose)
 
     def test_ftp_service_cannot_read_ca_private_key_or_immich_credentials(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
@@ -81,6 +83,8 @@ class SecurityContractTests(unittest.TestCase):
         self.assertRegex(gitignore, r"(?m)^\.env$")
         self.assertRegex(gitignore, r"(?m)^certs/\*$")
         self.assertRegex(gitignore, r"(?m)^immich-certs/\*$")
+        self.assertRegex(gitignore, r"(?m)^ftp_users\.txt$")
+        self.assertRegex(gitignore, r"(?m)^immich_api_key\.txt$")
         attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
         self.assertRegex(attributes, r"(?m)^\*\.sh text eol=lf$")
 

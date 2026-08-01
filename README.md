@@ -95,39 +95,25 @@ docker compose -f examples/docker-compose.with-immich.yml --env-file .env pull
 docker compose -f examples/docker-compose.with-immich.yml --env-file .env up -d
 ```
 
-## Quick start
+## Quick start (3 steps)
 
-1. Copy env and fill required values:
+Works for most users — Immich on the same Docker host, no extra config.
+
+1. Two credential files (ignored by git):
+
+```powershell
+# Windows PowerShell
+New-Item ftp_users.txt -Value "camera_a7c2:LongRandomSecret!!"
+New-Item immich_api_key.txt -Value "your-immich-api-key"
+```
 
 ```bash
-cp .env.example .env
+# Linux/macOS
+printf 'camera_a7c2:LongRandomSecret!!' > ftp_users.txt
+printf 'your-immich-api-key' > immich_api_key.txt
 ```
 
-```dotenv
-GHCR_OWNER=your-github-user
-# Pin a release tag for immutable deploys (latest is mutable).
-IMAGE_TAG=1.0.0
-FTP_USERS=camera_a7c2:LongRandomSecret!!
-FTP_MASQUERADE_ADDRESS=192.168.1.10
-IMMICH_HOST=http://immich-server:2283
-IMMICH_API_KEY=your_api_key
-# Set true only if Immich is plain HTTP on a trusted Docker network.
-IMMICH_ALLOW_HTTP=true
-IMMICH_DOCKER_NETWORK=immich_default
-TZ=Europe/Minsk
-```
-
-Recommended for production: Docker secrets instead of raw env credentials
-(see [`docker-compose.secrets.yml`](docker-compose.secrets.yml)):
-
-```bash
-mkdir -p secrets
-printf 'camera_a7c2:LongRandomSecret!!' > secrets/ftp_users
-printf 'your_api_key' > secrets/immich_api_key
-docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
-```
-
-2. Create FTPS certs for the host LAN IP (PowerShell or OpenSSL):
+2. FTPS certs for your Docker host LAN IP:
 
 ```powershell
 .\scripts\generate-ftps-cert.ps1 -ServerIp 192.168.1.10
@@ -137,35 +123,30 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 ./scripts/generate-ftps-cert.sh 192.168.1.10
 ```
 
-3. Start (Immich must already be up so `immich_default` exists):
+3. `.env` with only your LAN IP, then start:
+
+```dotenv
+FTP_MASQUERADE_ADDRESS=192.168.1.10
+```
 
 ```bash
-docker compose pull
 docker compose up -d
-docker compose ps
 ```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GHCR_OWNER` | yes* | GitHub user/org that published the images (*or use `docker-compose.build.yml`) |
-| `IMAGE_TAG` | yes | Image tag — pin a release (e.g. `1.0.0`); `latest` only for testing |
-| `FTP_USERS` / `FTP_USERS_FILE` | yes | Camera credentials — prefer the secret file |
-| `FTP_MASQUERADE_ADDRESS` | yes | Docker host LAN IPv4 (PASV replies) |
-| `IMMICH_HOST` | yes | Immich URL from the importer container (`/api` is appended) |
-| `IMMICH_API_KEY` / `IMMICH_API_KEY_FILE` | yes | Key with at least `asset.upload` |
-| `IMMICH_ALLOW_HTTP` | no | Required `true` when `IMMICH_HOST` is `http://` |
-| `IMMICH_DOCKER_NETWORK` | no | Immich Compose network (default `immich_default`) |
-| `TZ` | no | Timezone (default `UTC`) |
+Camera: user/password from `ftp_users.txt`, port `2121`, FTPES On, import `certs/cacert.pem`.
 
-**FTP username:** 3–64 chars; not `sony` / `admin` / `ftp` / `anonymous`.  
-**FTP password:** 16–64 random characters.
+### Non-default setups (optional)
 
-```bash
-# find Immich network name if the Compose project is not "immich"
-docker network ls
-```
+Edit `.env` only when you need to override:
 
-Optional private CA for Immich HTTPS: put the public cert at `immich-certs/ca.crt`.
+| Variable | Default | When to change |
+|----------|---------|----------------|
+| `IMMICH_HOST` | `http://immich-server:2283` | Immich on another host/network |
+| `IMMICH_DOCKER_NETWORK` | `immich_default` | Immich Compose project has another name |
+| `IMMICH_ALLOW_HTTP` | `true` | Set `false` to refuse plain HTTP Immich |
+| `GHCR_OWNER` / `IMAGE_TAG` | `hanevsky` / `latest` | Pin a release or use your own fork images |
+| `TZ` | `UTC` | Local timezone |
+| `FTP_USERS_FILE` / `IMMICH_API_KEY_FILE` | `./ftp_users.txt` / `./immich_api_key.txt` | Custom secret file paths |
 
 ## Immich API key
 

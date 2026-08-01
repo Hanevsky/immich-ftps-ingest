@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 secrets/
+ftp_users.txt
+immich_api_key.txt
 
 # Generated FTPS certificate material
 certs/*

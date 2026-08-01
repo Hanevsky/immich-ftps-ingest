@@ -3,7 +3,7 @@ name: sony-immich-ingest
 services:
   sony-ftp:
     container_name: sony_ftp
-    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER to your GitHub user or org}/immich-ftps-server:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GHCR_OWNER:-hanevsky}/immich-ftps-server:${IMAGE_TAG:-latest}
     # Uncomment for local development instead of pulling:
     # build:
     #   context: ./ftp-server
@@ -23,6 +23,8 @@ services:
         hard: 2048
     environment:
       FTP_USERS_FILE: /run/secrets/ftp_users
+      FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:?Set FTP_MASQUERADE_ADDRESS to this Docker host LAN IPv4}
+      TZ: ${TZ:-UTC}
     secrets:
       - ftp_users
     ports:
@@ -60,7 +62,7 @@ services:
 
   immich-importer:
     container_name: immich_ftp_importer
-    image: ghcr.io/${GHCR_OWNER:?Set GHCR_OWNER to your GitHub user or org}/immich-ftps-importer:${IMAGE_TAG:-latest}
+    image: ghcr.io/${GHCR_OWNER:-hanevsky}/immich-ftps-importer:${IMAGE_TAG:-latest}
     # build:
     #   context: ./importer
     user: "10001:10001"
@@ -74,10 +76,9 @@ services:
       - ALL
     pids_limit: 100
     environment:
-      IMMICH_HOST: ${IMMICH_HOST:?Set IMMICH_HOST, e.g. http://immich-server:2283}
+      IMMICH_HOST: ${IMMICH_HOST:-http://immich-server:2283}
       IMMICH_API_KEY_FILE: /run/secrets/immich_api_key
-      # Plain HTTP to Immich requires an explicit opt-in.
-      IMMICH_ALLOW_HTTP: ${IMMICH_ALLOW_HTTP:-false}
+      IMMICH_ALLOW_HTTP: ${IMMICH_ALLOW_HTTP:-true}
       TZ: ${TZ:-UTC}
     secrets:
       - immich_api_key
@@ -113,9 +114,9 @@ services:
 
 secrets:
   ftp_users:
-    file: ${FTP_USERS_FILE:-./secrets/ftp_users}
+    file: ${FTP_USERS_FILE:-./ftp_users.txt}
   immich_api_key:
-    file: ${IMMICH_API_KEY_FILE:-./secrets/immich_api_key}
+    file: ${IMMICH_API_KEY_FILE:-./immich_api_key.txt}
 
 volumes:
   sony_staging:
