@@ -32,6 +32,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Needed so entrypoint can chown volume mounts and drop to uid 10001.
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     pids_limit: 100
     environment:
       FTP_USERS: ${FTP_USERS:?Set FTP_USERS=username:password}
