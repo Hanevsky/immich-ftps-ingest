@@ -559,13 +559,13 @@ class ServerConfig:
             ),
             max_connections=parse_int(
                 "FTP_MAX_CONNECTIONS",
-                os.environ.get("FTP_MAX_CONNECTIONS", "5"),
+                os.environ.get("FTP_MAX_CONNECTIONS", "32"),
                 minimum=1,
                 maximum=50,
             ),
             max_connections_per_ip=parse_int(
                 "FTP_MAX_CONNECTIONS_PER_IP",
-                os.environ.get("FTP_MAX_CONNECTIONS_PER_IP", "2"),
+                os.environ.get("FTP_MAX_CONNECTIONS_PER_IP", "8"),
                 minimum=1,
                 maximum=10,
             ),
