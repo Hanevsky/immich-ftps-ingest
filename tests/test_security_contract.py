@@ -16,8 +16,7 @@ class SecurityContractTests(unittest.TestCase):
         self.assertGreaterEqual(compose.count("cap_drop:"), 2)
         self.assertGreaterEqual(compose.count("read_only: true"), 2)
         self.assertIn("FTP_USERS", compose)
-        self.assertIn("FTP_CERT_PEM", compose)
-        self.assertIn("FTP_KEY_PEM", compose)
+        self.assertIn("FTP_AUTO_GENERATE_CERT", compose)
         self.assertIn("IMMICH_API_KEY", compose)
         self.assertIn("IMMICH_HOST", compose)
         self.assertIn("immich_default", compose)
@@ -61,13 +60,11 @@ class SecurityContractTests(unittest.TestCase):
         self.assertIn("--ignore-scripts", importer_dockerfile)
 
     def test_containers_run_as_non_root_in_images(self) -> None:
-        for dockerfile in (
-            ROOT / "ftp-server" / "Dockerfile",
-            ROOT / "importer" / "Dockerfile",
-        ):
-            with self.subTest(dockerfile=dockerfile):
-                contents = dockerfile.read_text(encoding="utf-8")
-                self.assertRegex(contents, r"(?m)^USER 10001:10001$")
+        ftp_dockerfile = (ROOT / "ftp-server" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("runuser -u app", (ROOT / "ftp-server" / "entrypoint.sh").read_text(encoding="utf-8"))
+        self.assertIn("entrypoint.sh", ftp_dockerfile)
+        importer_dockerfile = (ROOT / "importer" / "Dockerfile").read_text(encoding="utf-8")
+        self.assertRegex(importer_dockerfile, r"(?m)^USER 10001:10001$")
 
     def test_direct_dependencies_are_pinned(self) -> None:
         requirements = (

@@ -1,27 +1,22 @@
 # Immich FTPS ingest — single stack for Docker Compose and Portainer.
 #
-# No bind-mounted secrets/certs: everything is environment variables
-# (Portainer web editor / Git stacks work without uploading extra files).
-#
 # Required env:
 #   FTP_USERS                username:password
 #   FTP_MASQUERADE_ADDRESS   Docker host LAN IPv4
 #   IMMICH_API_KEY           Immich API key (asset.upload)
-#   FTP_CERT_PEM             full PEM of server.crt
-#   FTP_KEY_PEM              full PEM of server.key
 #
-# Optional (defaults shown):
+# FTPS certificates are auto-generated on first start into the ftp_certs volume
+# (SAN = FTP_MASQUERADE_ADDRESS). Optional override:
+#   FTP_CERT_PEM / FTP_KEY_PEM
+#
+# Get the camera trust root after first start:
+#   docker exec sony_ftp cat /run/ftp-certs/cacert.pem
+#
+# Optional:
 #   IMMICH_HOST=http://immich-server:2283
 #   IMMICH_DOCKER_NETWORK=immich_default
 #   IMMICH_ALLOW_HTTP=true
-#   IMMICH_CA_CERT_PEM=      (only if Immich uses a private HTTPS CA)
-#   GHCR_OWNER=hanevsky
-#   IMAGE_TAG=latest
-#   TZ=UTC
-#
-# Generate certs:  ./scripts/generate-ftps-cert.sh 192.168.1.10
-# Fill .env:       ./scripts/make-env.sh 192.168.1.10
-# Or Portainer: paste this file + set the five required variables.
+#   FTP_AUTO_GENERATE_CERT=true
 
 name: sony-immich-ingest
 
@@ -41,8 +36,9 @@ services:
     environment:
       FTP_USERS: ${FTP_USERS:?Set FTP_USERS=username:password}
       FTP_MASQUERADE_ADDRESS: ${FTP_MASQUERADE_ADDRESS:?Set FTP_MASQUERADE_ADDRESS to this Docker host LAN IPv4}
-      FTP_CERT_PEM: ${FTP_CERT_PEM:?Set FTP_CERT_PEM (server.crt PEM)}
-      FTP_KEY_PEM: ${FTP_KEY_PEM:?Set FTP_KEY_PEM (server.key PEM)}
+      FTP_CERT_PEM: ${FTP_CERT_PEM:-}
+      FTP_KEY_PEM: ${FTP_KEY_PEM:-}
+      FTP_AUTO_GENERATE_CERT: ${FTP_AUTO_GENERATE_CERT:-true}
       TZ: ${TZ:-UTC}
     ports:
       - "2121:2121/tcp"

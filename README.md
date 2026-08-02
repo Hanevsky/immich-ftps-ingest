@@ -6,48 +6,33 @@ Add-only **FTPES** ingest for cameras into [Immich](https://immich.app).
 Camera ──FTPS (upload only)──► staging volume ──► immich-cli ──► Immich API
 ```
 
-No Immich library/DB mounts. Compromised FTP credentials can only upload allowed
-media into staging (not list/delete/overwrite). Restrict the camera IP on the firewall.
+## Quick start (Portainer / Compose)
 
-## Quick start
+**Required:** Docker + running Immich (`immich_default` network).
 
-**Required:** Docker Compose v2, running Immich (`immich_default` network), OpenSSL.
-
-```bash
-# 1) Certs for your Docker host LAN IP
-./scripts/generate-ftps-cert.sh 192.168.1.10          # Windows: .\scripts\generate-ftps-cert.ps1
-
-# 2) .env with credentials + PEM certs
-./scripts/make-env.sh 192.168.1.10 'camera_a7c2:LongRandomSecret!!' 'your-immich-api-key'
-# Windows: .\scripts\make-env.ps1 -ServerIp 192.168.1.10 -FtpUsers '...' -ImmichApiKey '...'
-
-# 3) Start (Immich must already be up)
-docker compose up -d
-```
-
-Import `certs/cacert.pem` on the camera. FTP: host = LAN IP, port `2121`, FTPES On, Passive On.
-
-### Portainer
-
-Stacks → Add stack → paste [`docker-compose.yml`](docker-compose.yml) → set env:
+### Environment (only 3 required)
 
 | Variable | Example |
 |----------|---------|
 | `FTP_USERS` | `camera_a7c2:LongRandomSecret!!` |
-| `FTP_MASQUERADE_ADDRESS` | `192.168.1.10` |
+| `FTP_MASQUERADE_ADDRESS` | `192.168.1.10` (Docker host LAN IP) |
 | `IMMICH_API_KEY` | Immich key with `asset.upload` |
-| `FTP_CERT_PEM` | full `certs/server.crt` |
-| `FTP_KEY_PEM` | full `certs/server.key` |
 
-Defaults (usually leave alone): `IMMICH_HOST=http://immich-server:2283`,
-`IMMICH_DOCKER_NETWORK=immich_default`, `IMMICH_ALLOW_HTTP=true`.
+FTPS certificates are **created automatically** on first start (stored in volume
+`ftp_certs`, SAN = masquerade IP).
 
-### Add next to Immich compose
+1. Portainer → Stacks → Add → paste [`docker-compose.yml`](docker-compose.yml)
+2. Set the three variables above → **Deploy**
+3. Export the camera trust root:
 
-Copy the `sony-ftp` / `immich-importer` services from `docker-compose.yml` into your
-[Immich compose](https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml).
-Set `IMMICH_HOST=http://immich-server:2283` and drop the external `immich` network
-(use the default project network).
+```bash
+docker exec sony_ftp cat /run/ftp-certs/cacert.pem > cacert.pem
+```
+
+4. Import `cacert.pem` on the camera. FTP: host = LAN IP, port `2121`, FTPES On, Passive On.
+
+Optional overrides: `IMMICH_HOST`, `IMMICH_DOCKER_NETWORK`, `FTP_CERT_PEM` /
+`FTP_KEY_PEM` (skip auto-gen), `FTP_AUTO_GENERATE_CERT=false`.
 
 ## Camera (Sony FTPES)
 
@@ -64,11 +49,14 @@ Set `IMMICH_HOST=http://immich-server:2283` and drop the external `immich` netwo
 
 ```bash
 docker compose logs -f
-docker compose down          # keeps volumes
-# docker compose down -v   # deletes staging — avoid
+docker compose down
+# docker compose down -v   # deletes staging + auto-generated certs — avoid
 ```
 
-Local image build (developers):  
+If you delete the `ftp_certs` volume, a **new** CA is generated and the camera
+must import the new `cacert.pem`.
+
+Local image build:  
 `docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`
 
 ## Security (short)
@@ -81,7 +69,7 @@ Local image build (developers):
 
 | Symptom | Check |
 |---------|--------|
-| Cert rejected | Import `cacert.pem`; IP in cert SAN |
+| Cert rejected | Re-import `cacert.pem` from the container; IP must match masquerade |
 | Login rejected | Secure Protocol = On |
 | Passive hang | Ports `30000–30009`, masquerade IP, firewall |
 | Importer unhealthy | Immich network / `IMMICH_HOST` |

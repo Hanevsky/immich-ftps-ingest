@@ -7,7 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin app \
     && mkdir -p /app /run/ftp-certs /srv/ftp/sony \
-    && chown -R app:app /app /srv/ftp
+    && chown -R app:app /app /srv/ftp /run/ftp-certs \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends util-linux \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -15,9 +18,10 @@ COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --requirement requirements.txt
 
 COPY --chown=app:app server.py .
+COPY --chmod=0555 entrypoint.sh /app/entrypoint.sh
+RUN sed -i 's/\r$//' /app/entrypoint.sh
 
-USER 10001:10001
-
+# Entrypoint starts as root to chown the ftp_certs volume, then drops to app.
 EXPOSE 2121 30000-30009
 
-ENTRYPOINT ["python", "/app/server.py"]
+ENTRYPOINT ["/app/entrypoint.sh"]

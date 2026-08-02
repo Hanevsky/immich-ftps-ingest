@@ -179,6 +179,146 @@ def _normalize_pem(value: str) -> str:
     return text.strip()
 
 
+def generate_self_signed_ftps_certs(
+    cert_dir: Path,
+    *,
+    server_ip: str,
+    validity_days: int = 825,
+) -> tuple[Path, Path, Path]:
+    """Create a local CA + server certificate for camera FTPES (persisted on volume)."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    ca_key_path = cert_dir / "ca.key"
+    ca_cert_path = cert_dir / "cacert.pem"
+    server_key_path = cert_dir / "server.key"
+    server_cert_path = cert_dir / "server.crt"
+
+    now = datetime.now(timezone.utc)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Immich FTPS Local CA")])
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=validity_days))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, server_ip)])
+    try:
+        san = x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(server_ip))])
+    except ValueError as error:
+        raise ConfigError(
+            "FTP_MASQUERADE_ADDRESS must be a valid IPv4 for automatic certificate generation"
+        ) from error
+
+    server_cert = (
+        x509.CertificateBuilder()
+        .subject_name(server_name)
+        .issuer_name(ca_name)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=validity_days))
+        .add_extension(san, critical=False)
+        .add_extension(
+            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    ca_key_path.write_bytes(
+        ca_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+    ca_cert_path.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+    server_key_path.write_bytes(
+        server_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+    server_cert_path.write_bytes(server_cert.public_bytes(serialization.Encoding.PEM))
+
+    if os.name == "posix":
+        os.chmod(ca_key_path, 0o600)
+        os.chmod(server_key_path, 0o600)
+        os.chmod(ca_cert_path, 0o644)
+        os.chmod(server_cert_path, 0o644)
+
+    LOGGER.warning(
+        "Generated self-signed FTPS certificates in %s for IP=%s. "
+        "Import cacert.pem into the camera: docker exec sony_ftp cat /run/ftp-certs/cacert.pem",
+        cert_dir,
+        server_ip,
+    )
+    return server_cert_path, server_key_path, ca_cert_path
+
+
+def ensure_ftps_certificate_files(
+    *,
+    cert_path: Path,
+    key_path: Path,
+    masquerade_address: str | None,
+    allow_plaintext: bool,
+) -> tuple[Path | None, Path | None]:
+    """Resolve cert material from PEM env, existing files, or one-time auto-generation."""
+    cert_pem = _normalize_pem(os.environ.get("FTP_CERT_PEM", ""))
+    key_pem = _normalize_pem(os.environ.get("FTP_KEY_PEM", ""))
+    if cert_pem or key_pem:
+        if not (cert_pem and key_pem):
+            raise ConfigError("FTP_CERT_PEM and FTP_KEY_PEM must both be set")
+        cert_path.parent.mkdir(parents=True, exist_ok=True)
+        cert_path.write_text(cert_pem + "\n", encoding="utf-8")
+        key_path.write_text(key_pem + "\n", encoding="utf-8")
+        if os.name == "posix":
+            os.chmod(cert_path, 0o600)
+            os.chmod(key_path, 0o600)
+
+    cert_exists = cert_path.is_file()
+    key_exists = key_path.is_file()
+    if cert_exists != key_exists:
+        raise ConfigError(
+            "FTP_CERT_FILE and FTP_KEY_FILE must either both exist or both be absent"
+        )
+
+    if not cert_exists:
+        auto_generate = parse_bool(
+            "FTP_AUTO_GENERATE_CERT",
+            os.environ.get("FTP_AUTO_GENERATE_CERT", "true"),
+        )
+        if allow_plaintext:
+            return None, None
+        if not auto_generate:
+            raise ConfigError(
+                "FTPS is required: set FTP_CERT_PEM/FTP_KEY_PEM, mount certificates, "
+                "or keep FTP_AUTO_GENERATE_CERT=true"
+            )
+        if not masquerade_address:
+            raise ConfigError(
+                "FTP_MASQUERADE_ADDRESS is required to auto-generate an FTPS certificate"
+            )
+        generate_self_signed_ftps_certs(cert_path.parent, server_ip=masquerade_address)
+
+    return cert_path, key_path
+
+
 def resolve_ftp_credentials() -> tuple[str, str]:
     """Accept FTP_USERS=user:password (or FTP_USERS_FILE with the same content)."""
     users = _read_secret_file("FTP_USERS_FILE") or os.environ.get(
@@ -256,38 +396,15 @@ class ServerConfig:
             os.environ.get("FTP_CERT_FILE", "/run/ftp-certs/server.crt")
         )
         key_path = Path(os.environ.get("FTP_KEY_FILE", "/run/ftp-certs/server.key"))
-
-        # Portainer-friendly: allow PEM content via env when bind-mounting
-        # certificate files is not possible.
-        cert_pem = _normalize_pem(os.environ.get("FTP_CERT_PEM", ""))
-        key_pem = _normalize_pem(os.environ.get("FTP_KEY_PEM", ""))
-        if cert_pem or key_pem:
-            if not (cert_pem and key_pem):
-                raise ConfigError("FTP_CERT_PEM and FTP_KEY_PEM must both be set")
-            # "unnamed" Docker volumes are writable by root only; write as root
-            # (server.py drops privileges only after config load via USER).
-            cert_path.parent.mkdir(parents=True, exist_ok=True)
-            cert_path.write_text(cert_pem + "\n", encoding="utf-8")
-            key_path.write_text(key_pem + "\n", encoding="utf-8")
-            if os.name == "posix":
-                os.chmod(cert_path, 0o600)
-                os.chmod(key_path, 0o600)
-
-        cert_exists = cert_path.is_file()
-        key_exists = key_path.is_file()
-
-        if cert_exists != key_exists:
-            raise ConfigError(
-                "FTP_CERT_FILE and FTP_KEY_FILE must either both exist or both be absent"
-            )
-        if not allow_plaintext and not (cert_exists and key_exists):
-            raise ConfigError(
-                "FTPS is required: generate server.crt/server.key or explicitly set "
-                "FTP_ALLOW_PLAINTEXT=true for trusted-LAN diagnostics"
-            )
-        if not cert_exists:
-            cert_path = None
-            key_path = None
+        masquerade_address = (
+            os.environ.get("FTP_MASQUERADE_ADDRESS", "").strip() or None
+        )
+        cert_path, key_path = ensure_ftps_certificate_files(
+            cert_path=cert_path,
+            key_path=key_path,
+            masquerade_address=masquerade_address,
+            allow_plaintext=allow_plaintext,
+        )
 
         min_free_mb = parse_int(
             "FTP_MIN_FREE_MB",
@@ -313,9 +430,7 @@ class ServerConfig:
             allow_plaintext=allow_plaintext,
             cert_file=cert_path,
             key_file=key_path,
-            masquerade_address=(
-                os.environ.get("FTP_MASQUERADE_ADDRESS", "").strip() or None
-            ),
+            masquerade_address=masquerade_address,
             passive_min_port=parse_int(
                 "FTP_PASSIVE_MIN_PORT",
                 os.environ.get("FTP_PASSIVE_MIN_PORT", "30000"),

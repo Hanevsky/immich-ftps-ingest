@@ -93,24 +93,75 @@ class ConfigValidationTests(unittest.TestCase):
                 "FTP_KEY_PEM",
                 "FTP_CERT_FILE",
                 "FTP_KEY_FILE",
+                "FTP_AUTO_GENERATE_CERT",
             )
         }
         try:
             os.environ["FTP_USERS"] = "camera_test_7x:Str0ng-P@ssw0rd!!99"
             os.environ.pop("FTP_CERT_FILE", None)
             os.environ.pop("FTP_KEY_FILE", None)
+            os.environ["FTP_AUTO_GENERATE_CERT"] = "false"
             with tempfile.TemporaryDirectory() as directory:
                 cert_path = Path(directory) / "server.crt"
                 key_path = Path(directory) / "server.key"
                 os.environ["FTP_CERT_FILE"] = str(cert_path)
                 os.environ["FTP_KEY_FILE"] = str(key_path)
-                os.environ["FTP_CERT_PEM"] = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
-                os.environ["FTP_KEY_PEM"] = "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"
-                # Force re-evaluation of cert material.
+                os.environ["FTP_CERT_PEM"] = (
+                    "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+                )
+                os.environ["FTP_KEY_PEM"] = (
+                    "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"
+                )
                 config = ftp_server.ServerConfig.from_env()
                 self.assertTrue(config.tls_enabled)
                 self.assertIn("BEGIN CERTIFICATE", cert_path.read_text(encoding="utf-8"))
                 self.assertIn("BEGIN PRIVATE KEY", key_path.read_text(encoding="utf-8"))
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_auto_generates_self_signed_certs_when_missing(self) -> None:
+        previous = {
+            key: os.environ.get(key)
+            for key in (
+                "FTP_USERS",
+                "FTP_CERT_PEM",
+                "FTP_KEY_PEM",
+                "FTP_CERT_FILE",
+                "FTP_KEY_FILE",
+                "FTP_MASQUERADE_ADDRESS",
+                "FTP_AUTO_GENERATE_CERT",
+                "FTP_ALLOW_PLAINTEXT",
+                "FTP_ROOT",
+            )
+        }
+        try:
+            os.environ["FTP_USERS"] = "camera_test_7x:Str0ng-P@ssw0rd!!99"
+            os.environ.pop("FTP_CERT_PEM", None)
+            os.environ.pop("FTP_KEY_PEM", None)
+            os.environ.pop("FTP_ALLOW_PLAINTEXT", None)
+            os.environ["FTP_AUTO_GENERATE_CERT"] = "true"
+            os.environ["FTP_MASQUERADE_ADDRESS"] = "192.0.2.10"
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cert_dir = root / "certs"
+                os.environ["FTP_ROOT"] = str(root / "data")
+                Path(os.environ["FTP_ROOT"]).mkdir()
+                os.environ["FTP_CERT_FILE"] = str(cert_dir / "server.crt")
+                os.environ["FTP_KEY_FILE"] = str(cert_dir / "server.key")
+                config = ftp_server.ServerConfig.from_env()
+                self.assertTrue(config.tls_enabled)
+                self.assertTrue((cert_dir / "server.crt").is_file())
+                self.assertTrue((cert_dir / "server.key").is_file())
+                self.assertTrue((cert_dir / "cacert.pem").is_file())
+                # Second start must reuse existing material.
+                first = (cert_dir / "server.crt").read_bytes()
+                config2 = ftp_server.ServerConfig.from_env()
+                self.assertTrue(config2.tls_enabled)
+                self.assertEqual(first, (cert_dir / "server.crt").read_bytes())
         finally:
             for key, value in previous.items():
                 if value is None:
