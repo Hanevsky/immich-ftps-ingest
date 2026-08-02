@@ -73,7 +73,12 @@ validate_configuration() {
       *) IMMICH_INSTANCE_URL="${host}/api" ;;
     esac
   fi
+  # Must be exported: Immich CLI reads IMMICH_INSTANCE_URL from the process env
+  # (or --url). Without it, upload falls back to auth.yml and fails with
+  # "No auth file exists. Please login first."
+  export IMMICH_INSTANCE_URL
   [ -n "${IMMICH_API_KEY:-}" ] || fail "IMMICH_API_KEY is required"
+  export IMMICH_API_KEY
 
   api_key_marker=$(printf '%s' "$IMMICH_API_KEY" | tr '[:upper:]' '[:lower:]')
   case "$api_key_marker" in
@@ -173,7 +178,11 @@ run_import_cycle() {
     return 0
   fi
 
-  set -- upload \
+  # Global --url/--key must come before the subcommand so CLI skips auth.yml.
+  set -- \
+    --url "$IMMICH_INSTANCE_URL" \
+    --key "$IMMICH_API_KEY" \
+    upload \
     --no-progress \
     --concurrency "$IMPORT_CONCURRENCY" \
     --visibility timeline

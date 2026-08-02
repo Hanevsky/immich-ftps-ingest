@@ -53,6 +53,9 @@ class SecurityContractTests(unittest.TestCase):
         self.assertIn("IMMICH_ALLOW_HTTP", importer)
         self.assertIn("IMMICH_HOST", importer)
         self.assertIn("IMMICH_CA_CERT_PEM", importer)
+        self.assertIn("export IMMICH_INSTANCE_URL", importer)
+        self.assertIn('--url "$IMMICH_INSTANCE_URL"', importer)
+        self.assertIn('--key "$IMMICH_API_KEY"', importer)
         self.assertNotIn("FTP_USERS", importer)
         importer_dockerfile = (ROOT / "importer" / "Dockerfile").read_text(
             encoding="utf-8"
