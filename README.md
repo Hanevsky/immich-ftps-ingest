@@ -38,9 +38,9 @@ Importer tunables (defaults are for camera bursts on a Docker LAN):
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `IMPORT_INTERVAL_SEC` | `15` | Idle poll interval |
+| `IMPORT_INTERVAL_SEC` | `30` | Idle poll interval |
 | `IMPORT_BATCH_SIZE` | `200` | Max files per Immich CLI call |
-| `IMPORT_CONCURRENCY` | `8` | Parallel uploads |
+| `IMPORT_CONCURRENCY` | `2` | Parallel uploads |
 | `IMPORT_SKIP_HASH` | `true` | Skip local hash (Immich still dedupes) |
 | `IMPORT_DELETE_AFTER_UPLOAD` | `true` | Delete staging file after success/duplicate |
 

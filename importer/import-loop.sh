@@ -119,9 +119,9 @@ validate_configuration() {
 
   # Tuned for camera bursts on a Docker LAN: short poll, larger batches, more
   # parallel uploads. Override via env if Immich or the host is saturated.
-  IMPORT_INTERVAL_SEC=${IMPORT_INTERVAL_SEC:-15}
+  IMPORT_INTERVAL_SEC=${IMPORT_INTERVAL_SEC:-30}
   IMPORT_BATCH_SIZE=${IMPORT_BATCH_SIZE:-200}
-  IMPORT_CONCURRENCY=${IMPORT_CONCURRENCY:-8}
+  IMPORT_CONCURRENCY=${IMPORT_CONCURRENCY:-2}
   validate_integer IMPORT_INTERVAL_SEC "$IMPORT_INTERVAL_SEC" 5 86400
   validate_integer IMPORT_BATCH_SIZE "$IMPORT_BATCH_SIZE" 1 2000
   validate_integer IMPORT_CONCURRENCY "$IMPORT_CONCURRENCY" 1 32
