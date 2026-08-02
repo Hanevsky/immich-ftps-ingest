@@ -117,12 +117,26 @@ validate_configuration() {
     export NODE_EXTRA_CA_CERTS
   fi
 
-  IMPORT_INTERVAL_SEC=${IMPORT_INTERVAL_SEC:-60}
-  IMPORT_BATCH_SIZE=${IMPORT_BATCH_SIZE:-100}
-  IMPORT_CONCURRENCY=${IMPORT_CONCURRENCY:-2}
-  validate_integer IMPORT_INTERVAL_SEC "$IMPORT_INTERVAL_SEC" 10 86400
-  validate_integer IMPORT_BATCH_SIZE "$IMPORT_BATCH_SIZE" 1 1000
-  validate_integer IMPORT_CONCURRENCY "$IMPORT_CONCURRENCY" 1 16
+  # Tuned for camera bursts on a Docker LAN: short poll, larger batches, more
+  # parallel uploads. Override via env if Immich or the host is saturated.
+  IMPORT_INTERVAL_SEC=${IMPORT_INTERVAL_SEC:-15}
+  IMPORT_BATCH_SIZE=${IMPORT_BATCH_SIZE:-200}
+  IMPORT_CONCURRENCY=${IMPORT_CONCURRENCY:-8}
+  validate_integer IMPORT_INTERVAL_SEC "$IMPORT_INTERVAL_SEC" 5 86400
+  validate_integer IMPORT_BATCH_SIZE "$IMPORT_BATCH_SIZE" 1 2000
+  validate_integer IMPORT_CONCURRENCY "$IMPORT_CONCURRENCY" 1 32
+
+  skip_hash=$(printf '%s' "${IMPORT_SKIP_HASH:-true}" | tr '[:upper:]' '[:lower:]')
+  case "$skip_hash" in
+    true|false) IMPORT_SKIP_HASH=$skip_hash ;;
+    *) fail "IMPORT_SKIP_HASH must be true or false" ;;
+  esac
+
+  delete_after=$(printf '%s' "${IMPORT_DELETE_AFTER_UPLOAD:-true}" | tr '[:upper:]' '[:lower:]')
+  case "$delete_after" in
+    true|false) IMPORT_DELETE_AFTER_UPLOAD=$delete_after ;;
+    *) fail "IMPORT_DELETE_AFTER_UPLOAD must be true or false" ;;
+  esac
 
   IMPORT_ALLOWED_EXTENSIONS_NORMALIZED=$(
     printf '%s' "${IMPORT_ALLOWED_EXTENSIONS:-jpg,jpeg,arw,heif,hif,dng,mp4,mov,mts,xmp}" \
@@ -135,7 +149,7 @@ validate_configuration() {
   mkdir -p "$STATE_DIR" "${IMMICH_CONFIG_DIR:-/tmp/immich-config}" "${HOME:-/tmp/home}"
   touch "$MANIFEST_FILE"
 
-  # Defense in depth: never honor deletion flags inherited from an image or host.
+  # Only honor deletion via our explicit CLI flags below — ignore host env noise.
   unset IMMICH_DELETE_ASSETS IMMICH_DELETE_DUPLICATES
 }
 
@@ -151,6 +165,7 @@ collect_batch() {
   count=0
   while IFS= read -r file_path; do
     is_allowed_file "$file_path" || continue
+    # Manifest is a crash-safety net; after delete-on-success the dir is usually empty.
     already_imported "$file_path" && continue
     printf '%s\n' "$file_path" >> "$BATCH_FILE"
     count=$((count + 1))
@@ -158,6 +173,25 @@ collect_batch() {
   done < "$CANDIDATE_FILE"
 
   printf '%s' "$count"
+}
+
+delete_batch_files() {
+  deleted=0
+  failed=0
+  while IFS= read -r file_path; do
+    [ -e "$file_path" ] || continue
+    if rm -f -- "$file_path"; then
+      deleted=$((deleted + 1))
+    else
+      failed=$((failed + 1))
+      log "WARNING: could not delete staging file path=${file_path}"
+    fi
+  done < "$BATCH_FILE"
+  if [ "$failed" -gt 0 ]; then
+    log "WARNING: staging cleanup incomplete deleted=${deleted} failed=${failed}"
+  elif [ "$deleted" -gt 0 ]; then
+    log "Deleted staging files count=${deleted}"
+  fi
 }
 
 mark_batch_imported() {
@@ -170,6 +204,9 @@ mark_batch_imported() {
   sync "$MANIFEST_FILE" 2>/dev/null || sync
 }
 
+# Exit codes for the outer drain loop:
+#   0 — idle, partial batch, or error → sleep before next poll
+#   1 — full batch uploaded → immediately process the next batch
 run_import_cycle() {
   batch_count=$(collect_batch)
   if [ "$batch_count" -eq 0 ]; then
@@ -187,6 +224,15 @@ run_import_cycle() {
     --concurrency "$IMPORT_CONCURRENCY" \
     --visibility timeline
 
+  if [ "$IMPORT_SKIP_HASH" = "true" ]; then
+    set -- "$@" --skip-hash
+  fi
+
+  if [ "$IMPORT_DELETE_AFTER_UPLOAD" = "true" ]; then
+    # CLI removes locals after upload / server-side duplicate detection.
+    set -- "$@" --delete --delete-duplicates
+  fi
+
   if [ -n "${IMMICH_ALBUM_NAME:-}" ]; then
     set -- "$@" --album-name "$IMMICH_ALBUM_NAME"
   fi
@@ -195,11 +241,19 @@ run_import_cycle() {
     set -- "$@" "$file_path"
   done < "$BATCH_FILE"
 
-  log "Starting Immich upload batch files=${batch_count}"
+  log "Starting Immich upload batch files=${batch_count} concurrency=${IMPORT_CONCURRENCY} skip_hash=${IMPORT_SKIP_HASH} delete=${IMPORT_DELETE_AFTER_UPLOAD}"
   if immich "$@"; then
     mark_batch_imported
+    if [ "$IMPORT_DELETE_AFTER_UPLOAD" = "true" ]; then
+      # Belt-and-suspenders: remove anything the CLI left behind (e.g. races).
+      delete_batch_files
+    fi
     date +%s > "${STATE_DIR}/last-cycle"
     log "Immich upload batch completed files=${batch_count}"
+    if [ "$batch_count" -ge "$IMPORT_BATCH_SIZE" ]; then
+      return 1
+    fi
+    return 0
   else
     exit_code=$?
     log "ERROR: Immich upload failed exit_code=${exit_code}; batch will be retried"
@@ -213,7 +267,14 @@ run_locked_cycle() (
     log "Another importer cycle holds the lock; skipping"
     exit 0
   fi
-  run_import_cycle
+  # Drain full batches without sleeping so large camera dumps clear quickly.
+  while :; do
+    set +e
+    run_import_cycle
+    cycle_status=$?
+    set -e
+    [ "$cycle_status" -eq 1 ] || break
+  done
 )
 
 shutdown() {
@@ -224,7 +285,7 @@ shutdown() {
 trap shutdown INT TERM
 
 validate_configuration
-log "Importer started interval_seconds=${IMPORT_INTERVAL_SEC} batch_size=${IMPORT_BATCH_SIZE}"
+log "Importer started interval_seconds=${IMPORT_INTERVAL_SEC} batch_size=${IMPORT_BATCH_SIZE} concurrency=${IMPORT_CONCURRENCY} skip_hash=${IMPORT_SKIP_HASH} delete_after_upload=${IMPORT_DELETE_AFTER_UPLOAD}"
 
 interruptible_sleep() {
   sleep_pid=

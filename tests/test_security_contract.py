@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class SecurityContractTests(unittest.TestCase):
     def test_compose_is_self_contained_for_portainer(self) -> None:
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn("sony_staging:/data:ro", compose)
+        self.assertIn("sony_staging:/data", compose)
+        self.assertNotIn("sony_staging:/data:ro", compose)
         self.assertIn("internal: true", compose)
         self.assertGreaterEqual(compose.count("no-new-privileges:true"), 2)
         # Importer stays capability-dropped; FTP keeps defaults for volume mounts.
@@ -43,11 +44,15 @@ class SecurityContractTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertNotIn(value, compose)
 
-    def test_importer_has_no_local_delete_flags(self) -> None:
+    def test_importer_deletes_only_after_successful_upload(self) -> None:
         importer = (ROOT / "importer" / "import-loop.sh").read_text(encoding="utf-8")
-        self.assertIsNone(re.search(r"(?m)^\s*(rm|unlink)\b", importer))
-        self.assertNotIn("--delete", importer)
-        self.assertNotIn("--delete-duplicates", importer)
+        # Controlled cleanup after success; never honor host delete env vars alone.
+        self.assertIn("unset IMMICH_DELETE_ASSETS IMMICH_DELETE_DUPLICATES", importer)
+        self.assertIn("--delete --delete-duplicates", importer)
+        self.assertIn("IMPORT_DELETE_AFTER_UPLOAD", importer)
+        self.assertIn("rm -f --", importer)
+        self.assertIn("--skip-hash", importer)
+        self.assertIn("IMPORT_CONCURRENCY", importer)
         self.assertRegex(importer, r"''\|\.\*\|-\*\)")
         self.assertRegex(importer, r"sync \"\$MANIFEST_FILE\"")
         self.assertIn("IMMICH_ALLOW_HTTP", importer)

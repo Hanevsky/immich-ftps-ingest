@@ -34,6 +34,16 @@ docker exec sony_ftp cat /run/ftp-certs/cacert.pem > cacert.pem
 Optional overrides: `IMMICH_HOST`, `IMMICH_DOCKER_NETWORK`, `FTP_CERT_PEM` /
 `FTP_KEY_PEM` (skip auto-gen), `FTP_AUTO_GENERATE_CERT=false`.
 
+Importer tunables (defaults are for camera bursts on a Docker LAN):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `IMPORT_INTERVAL_SEC` | `15` | Idle poll interval |
+| `IMPORT_BATCH_SIZE` | `200` | Max files per Immich CLI call |
+| `IMPORT_CONCURRENCY` | `8` | Parallel uploads |
+| `IMPORT_SKIP_HASH` | `true` | Skip local hash (Immich still dedupes) |
+| `IMPORT_DELETE_AFTER_UPLOAD` | `true` | Delete staging file after success/duplicate |
+
 ## Camera (Sony FTPES)
 
 | Setting | Value |
@@ -62,7 +72,7 @@ Local image build:
 ## Security (short)
 
 - FTPS required; destructive FTP commands blocked; collisions get `_1`, `_2`, …
-- Staging is never auto-deleted after import
+- Staging files are deleted after a successful Immich upload (or server duplicate)
 - New uploads rejected with `452` when free space is low (~1 GB default)
 
 ## Troubleshooting
