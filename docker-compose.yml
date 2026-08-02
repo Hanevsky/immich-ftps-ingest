@@ -6,8 +6,10 @@
 #   IMMICH_API_KEY           Immich API key (asset.upload)
 #
 # FTPS certificates are auto-generated on first start into the ftp_certs volume
-# (SAN = FTP_MASQUERADE_ADDRESS). Optional override:
+# (SAN = FTP_MASQUERADE_ADDRESS [+ optional FTP_CERT_DNS]). Optional override:
 #   FTP_CERT_PEM / FTP_KEY_PEM
+# Force a new CA/server pair once:
+#   FTP_REGENERATE_CERT=true  (then set back to false after camera re-import)
 #
 # Get the camera trust root after first start:
 #   docker exec sony_ftp cat /run/ftp-certs/cacert.pem
@@ -17,6 +19,8 @@
 #   IMMICH_DOCKER_NETWORK=immich_default
 #   IMMICH_ALLOW_HTTP=true
 #   FTP_AUTO_GENERATE_CERT=true
+#   FTP_CERT_DNS=ftp.example.com
+#   FTP_REGENERATE_CERT=false
 
 name: sony-immich-ingest
 
@@ -38,6 +42,8 @@ services:
       FTP_CERT_PEM: ${FTP_CERT_PEM:-}
       FTP_KEY_PEM: ${FTP_KEY_PEM:-}
       FTP_AUTO_GENERATE_CERT: ${FTP_AUTO_GENERATE_CERT:-true}
+      FTP_CERT_DNS: ${FTP_CERT_DNS:-}
+      FTP_REGENERATE_CERT: ${FTP_REGENERATE_CERT:-false}
       TZ: ${TZ:-UTC}
     ports:
       - "2121:2121/tcp"

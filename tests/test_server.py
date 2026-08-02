@@ -136,6 +136,8 @@ class ConfigValidationTests(unittest.TestCase):
                 "FTP_AUTO_GENERATE_CERT",
                 "FTP_ALLOW_PLAINTEXT",
                 "FTP_ROOT",
+                "FTP_REGENERATE_CERT",
+                "FTP_CERT_DNS",
             )
         }
         try:
@@ -157,17 +159,43 @@ class ConfigValidationTests(unittest.TestCase):
                 self.assertTrue((cert_dir / "server.crt").is_file())
                 self.assertTrue((cert_dir / "server.key").is_file())
                 self.assertTrue((cert_dir / "cacert.pem").is_file())
+                from cryptography import x509
+
+                ca = x509.load_pem_x509_certificate(
+                    (cert_dir / "cacert.pem").read_bytes()
+                )
+                leaf = x509.load_pem_x509_certificate(
+                    (cert_dir / "server.crt").read_bytes()
+                )
+                self.assertTrue(ca.extensions.get_extension_for_class(x509.BasicConstraints).value.ca)
+                self.assertFalse(
+                    leaf.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+                )
                 # Second start must reuse existing material.
                 first = (cert_dir / "server.crt").read_bytes()
                 config2 = ftp_server.ServerConfig.from_env()
                 self.assertTrue(config2.tls_enabled)
                 self.assertEqual(first, (cert_dir / "server.crt").read_bytes())
+
+                os.environ["FTP_REGENERATE_CERT"] = "true"
+                os.environ["FTP_CERT_DNS"] = "ftp.example.test"
+                config3 = ftp_server.ServerConfig.from_env()
+                self.assertTrue(config3.tls_enabled)
+                rotated = (cert_dir / "server.crt").read_bytes()
+                self.assertNotEqual(first, rotated)
+                leaf2 = x509.load_pem_x509_certificate(rotated)
+                san = leaf2.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName
+                ).value
+                self.assertIn("ftp.example.test", san.get_values_for_type(x509.DNSName))
         finally:
             for key, value in previous.items():
                 if value is None:
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+            os.environ.pop("FTP_REGENERATE_CERT", None)
+            os.environ.pop("FTP_CERT_DNS", None)
 
 
 class FilenamePolicyTests(unittest.TestCase):

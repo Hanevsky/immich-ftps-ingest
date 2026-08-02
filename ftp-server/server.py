@@ -179,50 +179,87 @@ def _normalize_pem(value: str) -> str:
     return text.strip()
 
 
+def _ftp_cert_dns_names() -> list[str]:
+    raw = os.environ.get("FTP_CERT_DNS", "").strip()
+    if not raw:
+        return []
+    return [part.strip().rstrip(".") for part in raw.split(",") if part.strip()]
+
+
 def generate_self_signed_ftps_certs(
     cert_dir: Path,
     *,
     server_ip: str,
+    dns_names: list[str] | None = None,
     validity_days: int = 825,
 ) -> tuple[Path, Path, Path]:
-    """Create a local CA + server certificate for camera FTPES (persisted on volume)."""
+    """Create a Sony-friendly local CA + server certificate (persisted on volume)."""
     from datetime import datetime, timedelta, timezone
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
     cert_dir.mkdir(parents=True, exist_ok=True)
     ca_key_path = cert_dir / "ca.key"
     ca_cert_path = cert_dir / "cacert.pem"
     server_key_path = cert_dir / "server.key"
     server_cert_path = cert_dir / "server.crt"
+    dns_names = list(dns_names or [])
 
     now = datetime.now(timezone.utc)
-    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Immich FTPS Local CA")])
-    ca_cert = (
+    # 3072-bit CA matches scripts/generate-ftps-cert.*; 4096 can fail on some cameras.
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Sony FTP Local Root CA")])
+    ca_builder = (
         x509.CertificateBuilder()
         .subject_name(ca_name)
         .issuer_name(ca_name)
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(days=validity_days))
+        .not_valid_after(now + timedelta(days=3650))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .sign(ca_key, hashes.SHA256())
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+            critical=False,
+        )
     )
+    ca_cert = ca_builder.sign(ca_key, hashes.SHA256())
 
-    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, server_ip)])
     try:
-        san = x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(server_ip))])
+        server_ip_obj = ipaddress.ip_address(server_ip)
     except ValueError as error:
         raise ConfigError(
             "FTP_MASQUERADE_ADDRESS must be a valid IPv4 for automatic certificate generation"
         ) from error
+    if server_ip_obj.version != 4:
+        raise ConfigError(
+            "FTP_MASQUERADE_ADDRESS must be IPv4 for passive-mode camera access"
+        )
 
+    san_entries: list[x509.GeneralName] = [x509.IPAddress(server_ip_obj)]
+    for dns_name in dns_names:
+        san_entries.append(x509.DNSName(dns_name))
+
+    common_name = dns_names[0] if dns_names else server_ip
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     server_cert = (
         x509.CertificateBuilder()
         .subject_name(server_name)
@@ -231,9 +268,32 @@ def generate_self_signed_ftps_certs(
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=validity_days))
-        .add_extension(san, critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
-            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=True,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
             critical=False,
         )
         .sign(ca_key, hashes.SHA256())
@@ -246,7 +306,9 @@ def generate_self_signed_ftps_certs(
             serialization.NoEncryption(),
         )
     )
-    ca_cert_path.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+    ca_pem = ca_cert.public_bytes(serialization.Encoding.PEM)
+    server_pem = server_cert.public_bytes(serialization.Encoding.PEM)
+    ca_cert_path.write_bytes(ca_pem)
     server_key_path.write_bytes(
         server_key.private_bytes(
             serialization.Encoding.PEM,
@@ -254,7 +316,8 @@ def generate_self_signed_ftps_certs(
             serialization.NoEncryption(),
         )
     )
-    server_cert_path.write_bytes(server_cert.public_bytes(serialization.Encoding.PEM))
+    # Chain = leaf + CA so TLS clients that expect a chain still verify.
+    server_cert_path.write_bytes(server_pem + ca_pem)
 
     if os.name == "posix":
         os.chmod(ca_key_path, 0o600)
@@ -263,12 +326,23 @@ def generate_self_signed_ftps_certs(
         os.chmod(server_cert_path, 0o644)
 
     LOGGER.warning(
-        "Generated self-signed FTPS certificates in %s for IP=%s. "
-        "Import cacert.pem into the camera: docker exec sony_ftp cat /run/ftp-certs/cacert.pem",
+        "Generated self-signed FTPS certificates in %s for IP=%s dns=%s. "
+        "Import ONLY cacert.pem into the camera: "
+        "docker exec sony_ftp cat /run/ftp-certs/cacert.pem",
         cert_dir,
         server_ip,
+        ",".join(dns_names) if dns_names else "(none)",
     )
     return server_cert_path, server_key_path, ca_cert_path
+
+
+def _clear_generated_ftps_material(cert_dir: Path) -> None:
+    for name in ("ca.key", "cacert.pem", "server.key", "server.crt", "ca.crt", "ca.srl"):
+        path = cert_dir / name
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def ensure_ftps_certificate_files(
@@ -290,6 +364,18 @@ def ensure_ftps_certificate_files(
         if os.name == "posix":
             os.chmod(cert_path, 0o600)
             os.chmod(key_path, 0o600)
+
+    regenerate = parse_bool(
+        "FTP_REGENERATE_CERT",
+        os.environ.get("FTP_REGENERATE_CERT", "false"),
+    )
+    if regenerate and not (cert_pem or key_pem):
+        LOGGER.warning(
+            "FTP_REGENERATE_CERT=true — wiping generated certs in %s "
+            "(set back to false after the camera re-imports cacert.pem)",
+            cert_path.parent,
+        )
+        _clear_generated_ftps_material(cert_path.parent)
 
     cert_exists = cert_path.is_file()
     key_exists = key_path.is_file()
@@ -314,7 +400,11 @@ def ensure_ftps_certificate_files(
             raise ConfigError(
                 "FTP_MASQUERADE_ADDRESS is required to auto-generate an FTPS certificate"
             )
-        generate_self_signed_ftps_certs(cert_path.parent, server_ip=masquerade_address)
+        generate_self_signed_ftps_certs(
+            cert_path.parent,
+            server_ip=masquerade_address,
+            dns_names=_ftp_cert_dns_names(),
+        )
 
     return cert_path, key_path
 

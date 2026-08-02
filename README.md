@@ -19,7 +19,10 @@ Camera ──FTPS (upload only)──► staging volume ──► immich-cli ─
 | `IMMICH_API_KEY` | Immich key with `asset.upload` |
 
 FTPS certificates are **created automatically** on first start (stored in volume
-`ftp_certs`, SAN = masquerade IP).
+`ftp_certs`, SAN = masquerade IP, optional DNS via `FTP_CERT_DNS`).
+
+To rotate certificates once: set `FTP_REGENERATE_CERT=true`, recreate `sony_ftp`,
+export/import `cacert.pem`, then set `FTP_REGENERATE_CERT=false`.
 
 1. Portainer → Stacks → Add → paste [`docker-compose.yml`](docker-compose.yml)
 2. Set the three variables above → **Deploy**
