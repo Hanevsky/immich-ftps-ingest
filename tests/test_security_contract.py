@@ -13,7 +13,8 @@ class SecurityContractTests(unittest.TestCase):
         self.assertIn("sony_staging:/data:ro", compose)
         self.assertIn("internal: true", compose)
         self.assertGreaterEqual(compose.count("no-new-privileges:true"), 2)
-        self.assertGreaterEqual(compose.count("cap_drop:"), 2)
+        # Importer stays capability-dropped; FTP keeps defaults for volume mounts.
+        self.assertGreaterEqual(compose.count("\n    cap_drop:"), 1)
         self.assertGreaterEqual(compose.count("read_only: true"), 2)
         self.assertIn("FTP_USERS", compose)
         self.assertIn("FTP_AUTO_GENERATE_CERT", compose)

@@ -30,7 +30,7 @@ services:
     stop_grace_period: 15s
     security_opt:
       - no-new-privileges:true
-    # Do not cap_drop:ALL here — Portainer/volume mounts need DAC/CHOWN for first start.
+    # Keep default Docker capabilities: named volumes need ownership fixups on first start.
     pids_limit: 100
     environment:
       FTP_USERS: ${FTP_USERS:?Set FTP_USERS=username:password}
