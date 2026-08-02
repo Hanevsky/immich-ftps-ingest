@@ -5,13 +5,15 @@ ARG IMMICH_CLI_VERSION=3.1.0
 ENV NODE_ENV=production \
     NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false \
-    NPM_CONFIG_AUDIT=false
+    NPM_CONFIG_AUDIT=false \
+    HOME=/tmp/home \
+    IMMICH_CONFIG_DIR=/tmp/immich-config
 
 RUN apk add --no-cache ca-certificates findutils util-linux \
     && npm install --global --omit=dev --ignore-scripts "@immich/cli@${IMMICH_CLI_VERSION}" \
     && npm cache clean --force \
     && addgroup -g 10001 app \
-    && adduser -D -H -u 10001 -G app -s /sbin/nologin app \
+    && adduser -D -H -h /tmp/home -u 10001 -G app -s /sbin/nologin app \
     && mkdir -p /app /data /run/immich-certs /state \
     && chown -R app:app /app /data /state
 

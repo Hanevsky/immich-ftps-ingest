@@ -83,6 +83,8 @@ services:
       IMMICH_API_KEY: ${IMMICH_API_KEY:?Set IMMICH_API_KEY}
       IMMICH_ALLOW_HTTP: ${IMMICH_ALLOW_HTTP:-true}
       IMMICH_CA_CERT_PEM: ${IMMICH_CA_CERT_PEM:-}
+      HOME: /tmp/home
+      IMMICH_CONFIG_DIR: /tmp/immich-config
       TZ: ${TZ:-UTC}
     volumes:
       - sony_staging:/data:ro
